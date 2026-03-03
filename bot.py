@@ -1,3 +1,21 @@
+# bot.py 상단에 추가
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass
+
+def run_health_server():
+    server = HTTPServer(("0.0.0.0", 8080), HealthHandler)
+    server.serve_forever()
+
+
+
 import os
 import re
 import logging
@@ -158,6 +176,7 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     logger.info("봇 시작!")
+    Thread(target=run_health_server, daemon=True).start()
     app.run_polling()
 
 if __name__ == "__main__":
