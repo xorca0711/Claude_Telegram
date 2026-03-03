@@ -1,13 +1,15 @@
 import os
 import re
 import logging
+import requests
+from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
-import requests
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY")
 NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "92f87f8b62f14bbdb17329ba4cb4e34c")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,6 +17,48 @@ logger = logging.getLogger(__name__)
 def extract_url(text):
     match = re.search(r'https?://[^\s]+', text)
     return match.group(0) if match else None
+
+def fetch_page_content(url):
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(response.text, "html.parser")
+        title = None
+        og_title = soup.find("meta", property="og:title")
+        if og_title:
+            title = og_title.get("content", "").strip()
+        elif soup.title:
+            title = soup.title.string.strip()
+        for tag in soup(["script", "style", "nav", "footer"]):
+            tag.decompose()
+        body_text = soup.get_text(separator=" ", strip=True)[:3000]
+        return title, body_text
+    except Exception:
+        return None, None
+
+def summarize_with_gemini(title, body_text, url):
+    if not GEMINI_API_KEY:
+        return "요약 불가 (API 키 없음)"
+    try:
+        prompt = f"""다음 웹페이지 내용을 한국어로 3~4줄 요약해줘. 핵심 내용만 간결하게.
+
+제목: {title or '알 수 없음'}
+URL: {url}
+본문: {body_text or '본문 없음'}
+
+요약:"""
+
+        response = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
+            headers={"Content-Type": "application/json"},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=15
+        )
+        data = response.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception as e:
+        logger.error(f"요약 실패: {e}")
+        return body_text[:500] if body_text else url
 
 def classify_message(text):
     if extract_url(text):
@@ -71,11 +115,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = extract_url(text)
     category = classify_message(text)
     source = detect_source(text)
-    first_line = text.split("\n")[0]
-    title = first_line if len(first_line) > 5 else (url or "무제")
 
-    if save_to_notion(title, text, url, category, source):
-        await message.reply_text(f"Notion 저장 완료!\n분류: {category}\n출처: {source}")
+    if url:
+        await message.reply_text("잠깐만요, 내용 요약 중...")
+        title, body_text = fetch_page_content(url)
+        summary = summarize_with_gemini(title, body_text, url)
+        title = title if title else url
+    else:
+        title = text.split("\n")[0]
+        summary = text
+
+    if save_to_notion(title, summary, url, category, source):
+        await message.reply_text(f"Notion 저장 완료!\n제목: {title}\n분류: {category}\n출처: {source}")
     else:
         await message.reply_text("저장 실패. 설정을 확인해주세요.")
 
