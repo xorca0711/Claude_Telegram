@@ -23,15 +23,24 @@ def fetch_page_content(url):
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(response.text, "html.parser")
+
+        # 제목
         title = None
         og_title = soup.find("meta", property="og:title")
         if og_title:
             title = og_title.get("content", "").strip()
         elif soup.title:
             title = soup.title.string.strip()
-        for tag in soup(["script", "style", "nav", "footer"]):
-            tag.decompose()
-        body_text = soup.get_text(separator=" ", strip=True)[:3000]
+
+        # og:description 우선 사용 (인스타 등 로그인 필요 사이트 대응)
+        og_desc = soup.find("meta", property="og:description")
+        if og_desc and og_desc.get("content", "").strip():
+            body_text = og_desc.get("content", "").strip()
+        else:
+            for tag in soup(["script", "style", "nav", "footer"]):
+                tag.decompose()
+            body_text = soup.get_text(separator=" ", strip=True)[:3000]
+
         return title, body_text
     except Exception:
         return None, None
