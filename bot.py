@@ -1,6 +1,20 @@
-# bot.py 상단에 추가
+import os
+import re
+import logging
+import requests
+from bs4 import BeautifulSoup
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+NOTION_API_KEY = os.environ.get("NOTION_API_KEY")
+NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "92f87f8b62f14bbdb17329ba4cb4e34c")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -14,24 +28,6 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", 8080), HealthHandler)
     server.serve_forever()
 
-
-
-import os
-import re
-import logging
-import requests
-from bs4 import BeautifulSoup
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
-
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-NOTION_API_KEY = os.environ.get("NOTION_API_KEY")
-NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "92f87f8b62f14bbdb17329ba4cb4e34c")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 def extract_url(text):
     match = re.search(r'https?://[^\s]+', text)
     return match.group(0) if match else None
@@ -41,16 +37,12 @@ def fetch_page_content(url):
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(response.text, "html.parser")
-
-        # 제목
         title = None
         og_title = soup.find("meta", property="og:title")
         if og_title:
             title = og_title.get("content", "").strip()
         elif soup.title:
             title = soup.title.string.strip()
-
-        # og:description 우선 사용 (인스타 등 로그인 필요 사이트 대응)
         og_desc = soup.find("meta", property="og:description")
         if og_desc and og_desc.get("content", "").strip():
             body_text = og_desc.get("content", "").strip()
@@ -58,7 +50,6 @@ def fetch_page_content(url):
             for tag in soup(["script", "style", "nav", "footer"]):
                 tag.decompose()
             body_text = soup.get_text(separator=" ", strip=True)[:3000]
-
         return title, body_text
     except Exception:
         return None, None
@@ -74,7 +65,6 @@ URL: {url}
 본문: {body_text or '본문 없음'}
 
 요약:"""
-
         response = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
             headers={"Content-Type": "application/json"},
@@ -126,7 +116,6 @@ def save_to_notion(title, content, url, category, source):
     }
     if url:
         properties["URL"] = {"url": url}
-
     response = requests.post(
         "https://api.notion.com/v1/pages",
         headers=headers,
@@ -144,15 +133,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     source = detect_source(text)
 
     if url:
-        await message.reply_text("잠깐만요, 저장 중...")
+        await message.reply_text("잠깐만요, 내용 요약 중...")
         title, body_text = fetch_page_content(url)
-
-        # 인스타 등 크롤링 안 되는 경우 감지
         blocked_keywords = ["log in", "sign up", "login", "로그인", "회원가입"]
         is_blocked = not body_text or any(kw in body_text.lower() for kw in blocked_keywords)
-
         if is_blocked:
-            # 본문 없이 URL + 사용자가 보낸 텍스트로 요약 요청
             extra_text = text.replace(url, "").strip()
             summary = summarize_with_gemini(
                 title=None,
@@ -173,10 +158,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("저장 실패. 설정을 확인해주세요.")
 
 def main():
+    Thread(target=run_health_server, daemon=True).start()
+    logger.info("헬스체크 서버 시작 (port 8080)")
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     logger.info("봇 시작!")
-    Thread(target=run_health_server, daemon=True).start()
     app.run_polling()
 
 if __name__ == "__main__":
