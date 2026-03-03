@@ -126,10 +126,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     source = detect_source(text)
 
     if url:
-        await message.reply_text("잠깐만요, 내용 요약 중...")
+        await message.reply_text("잠깐만요, 저장 중...")
         title, body_text = fetch_page_content(url)
-        summary = summarize_with_gemini(title, body_text, url)
-        title = title if title else url
+
+        # 인스타 등 크롤링 안 되는 경우 감지
+        blocked_keywords = ["log in", "sign up", "login", "로그인", "회원가입"]
+        is_blocked = not body_text or any(kw in body_text.lower() for kw in blocked_keywords)
+
+        if is_blocked:
+            # 본문 없이 URL + 사용자가 보낸 텍스트로 요약 요청
+            extra_text = text.replace(url, "").strip()
+            summary = summarize_with_gemini(
+                title=None,
+                body_text=extra_text if extra_text else f"이 URL을 사용자가 저장했습니다: {url}",
+                url=url
+            )
+            title = title if title and "log in" not in title.lower() else url
+        else:
+            summary = summarize_with_gemini(title, body_text, url)
+            title = title if title else url
     else:
         title = text.split("\n")[0]
         summary = text
