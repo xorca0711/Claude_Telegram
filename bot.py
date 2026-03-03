@@ -160,10 +160,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     Thread(target=run_health_server, daemon=True).start()
     logger.info("헬스체크 서버 시작 (port 8080)")
+    
+    # 시작 전 기존 연결 강제 종료
+    token = TELEGRAM_BOT_TOKEN
+    requests.post(
+        f"https://api.telegram.org/bot{token}/deleteWebhook",
+        json={"drop_pending_updates": True}
+    )
+    requests.get(
+        f"https://api.telegram.org/bot{token}/getUpdates",
+        params={"offset": -1, "timeout": 1}
+    )
+    import time
+    time.sleep(3)
+    
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     logger.info("봇 시작!")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
