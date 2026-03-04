@@ -5,28 +5,16 @@ import requests
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
-from threading import Thread
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY")
 NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "92f87f8b62f14bbdb17329ba4cb4e34c")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://claude-telegram.onrender.com")
+PORT = int(os.environ.get("PORT", 8080))
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def log_message(self, format, *args):
-        pass
-
-def run_health_server():
-    server = HTTPServer(("0.0.0.0", 8080), HealthHandler)
-    server.serve_forever()
 
 def extract_url(text):
     match = re.search(r'https?://[^\s]+', text)
@@ -158,29 +146,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("저장 실패. 설정을 확인해주세요.")
 
 def main():
-    Thread(target=run_health_server, daemon=True).start()
-    logger.info("헬스체크 서버 시작 (port 8080)")
-    
-    # 시작 전 기존 연결 강제 종료
-    token = TELEGRAM_BOT_TOKEN
-    requests.post(
-        f"https://api.telegram.org/bot{token}/deleteWebhook",
-        json={"drop_pending_updates": True}
-    )
-    requests.get(
-        f"https://api.telegram.org/bot{token}/getUpdates",
-        params={"offset": -1, "timeout": 1}
-    )
-    import time
-    time.sleep(3)
-    
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    logger.info("봇 시작!")
-    app.run_polling(drop_pending_updates=True)
-
-if __name__ == "__main__":
-    main()
+    logger.info("봇 시작! (webhook 모드)")
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=f"{WEBHOOK_URL}/webhook",
+    )
 
 if __name__ == "__main__":
     main()
